@@ -1,7 +1,7 @@
 // Permite abrir la app sin conexión. Los datos NO pasan por acá:
 // las inspecciones se guardan en la tablet (IndexedDB) y en Supabase.
-const CACHE = "inspeccion-stm-v2";
-const APP = ["./", "./index.html", "./manifest.json", "./icon.svg"];
+const CACHE = "inspeccion-stm-v3";
+const APP = ["./", "./index.html", "./config.js", "./manifest.json", "./icon.svg"];
 const CDN = [
   "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js",

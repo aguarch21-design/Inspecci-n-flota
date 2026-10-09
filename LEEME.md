@@ -2,16 +2,18 @@
 
 App para tablet de la División Transporte (UPTU). Guarda las inspecciones en Supabase y las comparte en vivo entre todas las tablets del equipo.
 
-**Datos personales:** el nombre del notificado/chofer, las observaciones y las fotos se cifran en la tablet con la *clave del equipo* antes de enviarse. Supabase guarda solo texto ilegible y nunca recibe la clave.
+**Cifrado total:** cada acta completa (unidad, matrícula, fallas, notificado, C.I., observaciones) y sus fotos se cifran en la tablet con la *clave del equipo* antes de enviarse. Supabase guarda solo texto ilegible y una huella de la unidad para numerar; nunca recibe la clave.
 
 ## Archivos
 
 | Archivo | Para qué es |
 |---|---|
 | `index.html` | La app |
+| `config.js` | URL y clave anon de Supabase (se completa una sola vez) |
 | `sw.js` | Permite abrir la app sin conexión |
 | `manifest.json`, `icon.svg` | Ícono y nombre al instalarla en la tablet |
-| `supabase.sql` | Crea la base de datos (se pega una sola vez) |
+| `supabase.sql` | Crea la base de datos desde cero (se pega una sola vez) |
+| `actualizar-cifrado-total.sql` | Solo para quien ya tenía la versión anterior instalada |
 
 ## 1. Crear el proyecto en Supabase (10 min)
 
@@ -23,18 +25,18 @@ App para tablet de la División Transporte (UPTU). Guarda las inspecciones en Su
 
 ## 2. Configurar y publicar la app (10 min)
 
-1. Abrí `index.html` con un editor de texto. Cerca del principio del `<script>` reemplazá:
-   - `https://TU-PROYECTO.supabase.co` por la Project URL
-   - `TU-CLAVE-ANON-PUBLICA` por la clave anon public
+1. Abrí `config.js` con el Bloc de notas y completá:
+   - `url`: la Project URL (termina en `.supabase.co`, sin nada después)
+   - `anonKey`: la clave anon public (empieza con `eyJ`)
 
    La clave anon es pública por diseño: lo que protege los datos son los permisos de la base y el cifrado.
-2. En GitHub, creá un repositorio nuevo (por ejemplo `inspeccion-stm`) y subí los 5 archivos de la app (`index.html`, `sw.js`, `manifest.json`, `icon.svg`; `LEEME.md` es opcional). **No subas `supabase.sql` si el repositorio es público**: no tiene secretos, pero no hace falta exponerlo.
+2. En GitHub, creá un repositorio nuevo (por ejemplo `inspeccion-stm`) y subí los archivos de la app (`index.html`, `config.js`, `sw.js`, `manifest.json`, `icon.svg`; `LEEME.md` es opcional). **No subas los `.sql` si el repositorio es público**: no tiene secretos, pero no hace falta exponerlo.
 3. **Settings → Pages**: Source **Deploy from a branch**, rama `main`, carpeta `/ (root)`. En un minuto queda en `https://<tu-usuario>.github.io/inspeccion-stm/`.
 
 ## 3. Primer ingreso (administrador)
 
 1. Abrí el link, ingresá con tu usuario.
-2. La app te pide **crear la clave del equipo** (mínimo 10 caracteres). **Guardala en un lugar seguro de UPTU**: si se pierde, los nombres, observaciones y fotos guardados no se pueden recuperar.
+2. La app te pide **crear la clave del equipo** (mínimo 16 caracteres; usá una frase). **Guardala en un lugar seguro de UPTU**: si se pierde, los nombres, observaciones y fotos guardados no se pueden recuperar.
 3. En la pestaña **Equipo**, habilitá a cada inspector (nombre y correo). Después creale el usuario en Supabase → Authentication → Add user, con ese mismo correo, una contraseña inicial y **Auto Confirm User**.
 
 ## 4. Instalar en cada tablet
@@ -56,8 +58,14 @@ App para tablet de la División Transporte (UPTU). Guarda las inspecciones en Su
 
 - **Un inspector deja el equipo:** en la pestaña Equipo → **Deshabilitar**. Pierde el acceso a la base al instante, aunque conozca la clave. Si querés, borrá también su usuario en Supabase → Authentication.
 - **Tablet perdida o robada:** deshabilitá el usuario que estaba usando. Sin usuario habilitado, la clave guardada en la tablet no sirve para leer la base.
-- **Actualizar la app:** se reemplaza `index.html` en GitHub. Las tablets toman la versión nueva al abrirla con conexión.
+- **Actualizar la app:** se reemplaza `index.html` (y `sw.js` si cambia) en GitHub. `config.js` no se toca. Las tablets toman la versión nueva al abrirla con conexión.
 
 ## Límites del plan gratuito de Supabase
 
 500 MB de base de datos y 1 GB de archivos. Cada foto pesa unos 200–300 KB, así que alcanza para varios miles de inspecciones con fotos. Un proyecto gratuito se **pausa tras 7 días sin uso**; con uso diario no pasa, y si pasa se reactiva desde el panel.
+
+## Seguridad de las cuentas
+
+- Activá la **verificación en dos pasos** en tu cuenta de Supabase y en la de GitHub.
+- No compartas nunca la clave `service_role` ni la contraseña de la base de datos.
+- Bloqueo de pantalla con PIN en cada tablet.

@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@500;700&display=swap">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
 <style>
 /* Layout: tablet-first; diagrama del coche a la izquierda (fijo), checklist a la derecha; barra de guardado fija abajo. */
 :root{
@@ -304,8 +305,9 @@ body{padding-top:env(safe-area-inset-top,0px)}
 //  CONFIGURACIÓN — completar con los datos del proyecto de Supabase
 //  (Supabase → Project Settings → API)
 // =====================================================================
-const SUPABASE_URL = "https://knqwhzrzhdvyjzeameun.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXdoenJ6aGR2eWp6ZWFtZXVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NTIxMjQsImV4cCI6MjEwNzEyODEyNH0.hwtmj24G4B4qaGPgwcS8U2Ha8FwlmnKeLHvwPbgKtvo";
+// Los datos de conexión están en config.js (así las actualizaciones de la app no los pisan)
+const SUPABASE_URL = (window.INSPECCION_CONFIG && window.INSPECCION_CONFIG.url) || "";
+const SUPABASE_ANON_KEY = (window.INSPECCION_CONFIG && window.INSPECCION_CONFIG.anonKey) || "";
 // =====================================================================
 
 // ---------- Catálogo de ítems ----------
@@ -380,21 +382,27 @@ const idb = (() => {
 // ---------- Cifrado (AES-GCM 256, clave derivada con PBKDF2) ----------
 const TXT = new TextEncoder(), UTXT = new TextDecoder();
 const VERIF = "UPTU-INSPECCION-OK";
-let KEY = null;
+let KEYS = null;
 const b64 = buf => { const b = new Uint8Array(buf); let s = ""; for (let i=0;i<b.length;i+=0x8000) s += String.fromCharCode.apply(null, b.subarray(i,i+0x8000)); return btoa(s); };
 const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 async function deriveKey(pass, salt){
   const base = await crypto.subtle.importKey("raw", TXT.encode(pass), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({name:"PBKDF2", salt: unb64(salt), iterations: 310000, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+  const s = unb64(salt), sMac = new Uint8Array([...s, ...TXT.encode("|mac")]);
+  const aes = await crypto.subtle.deriveKey({name:"PBKDF2", salt: s, iterations: 310000, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+  const mac = await crypto.subtle.deriveKey({name:"PBKDF2", salt: sMac, iterations: 310000, hash:"SHA-256"}, base, {name:"HMAC", hash:"SHA-256", length:256}, false, ["sign"]);
+  return {aes, mac};
 }
-async function encBytes(bytes, key = KEY){
+// Huella de la unidad: el servidor la usa para numerar sin saber qué unidad es
+const normUnidad = u => String(u||"").trim().toUpperCase().replace(/^0+(?=\d)/, "");
+async function huellaUnidad(u){ const sig = await crypto.subtle.sign("HMAC", KEYS.mac, TXT.encode("unidad:" + normUnidad(u))); return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2,"0")).join(""); }
+async function encBytes(bytes, key = KEYS.aes){
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, bytes));
   const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12); return out;
 }
-async function decBytes(bytes, key = KEY){ const b = new Uint8Array(bytes); return crypto.subtle.decrypt({name:"AES-GCM", iv:b.slice(0,12)}, key, b.slice(12)); }
-async function encText(s, key = KEY){ return s ? "v1:" + b64(await encBytes(TXT.encode(s), key)) : null; }
-async function decText(s, key = KEY){
+async function decBytes(bytes, key = KEYS.aes){ const b = new Uint8Array(bytes); return crypto.subtle.decrypt({name:"AES-GCM", iv:b.slice(0,12)}, key, b.slice(12)); }
+async function encText(s, key = KEYS.aes){ return s ? "v1:" + b64(await encBytes(TXT.encode(s), key)) : null; }
+async function decText(s, key = KEYS.aes){
   if (!s) return ""; if (!s.startsWith("v1:")) return s;
   try { return UTXT.decode(await decBytes(unb64(s.slice(3)), key)); } catch { return "[no se pudo descifrar]"; }
 }
@@ -428,7 +436,7 @@ function gate(mode, extra = ""){
   const box = $("gateBox");
   const out = `<button class="link" type="button" id="gOut">Cerrar sesión</button>`;
   const views = {
-    config: `<h2>Falta configurar</h2><p>Completá <code>SUPABASE_URL</code> y <code>SUPABASE_ANON_KEY</code> al principio del archivo <code>index.html</code>.</p>`,
+    config: `<h2>Falta configurar</h2><p>Completá la URL y la clave anon de Supabase en el archivo <code>config.js</code>.</p>`,
     login: `<h2>Ingresar</h2><p>Usá el usuario que te dio el administrador de UPTU.</p>
       <form id="gForm" class="gform"><div class="fld"><label for="gEmail">Correo</label><input id="gEmail" type="email" autocomplete="username" required></div>
       <div class="fld"><label for="gPass">Contraseña</label><input id="gPass" type="password" autocomplete="current-password" required></div>
@@ -440,7 +448,7 @@ function gate(mode, extra = ""){
     crearClave: `<h2>Crear la clave del equipo</h2>
       <p>Con esta clave se cifran el nombre del notificado, las observaciones y las fotos. Supabase nunca la recibe. Cada tablet la pide una sola vez.</p>
       <p><strong>Guardala en un lugar seguro de UPTU: si se pierde, esos datos no se pueden recuperar.</strong></p>
-      <form id="gForm" class="gform"><div class="fld"><label for="gK1">Clave (mínimo 10 caracteres)</label><input id="gK1" type="password" minlength="10" autocomplete="new-password" required></div>
+      <form id="gForm" class="gform"><div class="fld"><label for="gK1">Clave (mínimo 16 caracteres; mejor una frase)</label><input id="gK1" type="password" minlength="16" autocomplete="new-password" required></div>
       <div class="fld"><label for="gK2">Repetir clave</label><input id="gK2" type="password" autocomplete="new-password" required></div>
       <div class="err" id="gErr"></div><button class="btn btn-navy" type="submit">Crear clave</button></form>${out}`,
     clave: `<h2>Clave del equipo</h2><p>Ingresala una sola vez en esta tablet. Se usa para leer y guardar los datos reservados.</p>
@@ -465,20 +473,20 @@ function gate(mode, extra = ""){
         await boot();
       } else if (mode === "crearClave") {
         const k1 = $("gK1").value, k2 = $("gK2").value;
-        if (k1.length < 10) throw new Error("La clave tiene que tener al menos 10 caracteres.");
+        if (k1.length < 16) throw new Error("La clave tiene que tener al menos 16 caracteres. Probá con una frase, por ejemplo: flota-uptu-inspeccion-2026");
         if (k1 !== k2) throw new Error("Las dos claves no coinciden.");
         const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
-        const key = await deriveKey(k1, salt);
-        const ver = await encText(VERIF, key);
+        const keys = await deriveKey(k1, salt);
+        const ver = await encText(VERIF, keys.aes);
         const { error } = await sb.from("config").insert([{clave:"sal", valor:salt}, {clave:"verificador", valor:ver}]);
         if (error) throw new Error("No se pudo guardar la configuración: " + error.message);
         cfg = {sal:salt, verificador:ver}; await idb.set("config", cfg);
-        KEY = key; await idb.set("claveEquipo", key);
+        KEYS = keys; await idb.set("claves", keys);
         start();
       } else if (mode === "clave") {
-        const key = await deriveKey($("gK1").value, cfg.sal);
-        if (await decText(cfg.verificador, key) !== VERIF) throw new Error("Clave incorrecta.");
-        KEY = key; await idb.set("claveEquipo", key);
+        const keys = await deriveKey($("gK1").value, cfg.sal);
+        if (await decText(cfg.verificador, keys.aes) !== VERIF) throw new Error("Clave incorrecta.");
+        KEYS = keys; await idb.set("claves", keys);
         start();
       }
     } catch (err) { $("gErr").textContent = err.message || "Error inesperado."; btn.disabled = false; }
@@ -492,7 +500,7 @@ async function logout(){
 
 // ---------- Arranque ----------
 async function boot(){
-  if (SUPABASE_URL.includes("TU-PROYECTO") || SUPABASE_ANON_KEY.includes("TU-CLAVE") || typeof supabase === "undefined") return gate("config");
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.includes("TU-CLAVE") || typeof supabase === "undefined") return gate("config");
   // Tolera URL copiada con /rest/v1/ u otra ruta al final
   const BASE_URL = SUPABASE_URL.trim().replace(/^(https:\/\/[^/]+).*$/, "$1");
   sb ||= supabase.createClient(BASE_URL, SUPABASE_ANON_KEY.trim(), { auth: { persistSession: true, autoRefreshToken: true } });
@@ -507,7 +515,7 @@ async function boot(){
     if (!perfil) return navigator.onLine ? gate("error", r.error.message || String(r.error.code||"")) : gate("offline");
     online = false;
   } else {
-    if (!r.data || !r.data.activo) { await idb.del("perfil").catch(()=>{}); await idb.del("cache").catch(()=>{}); await idb.del("claveEquipo").catch(()=>{}); return gate("noauth"); }
+    if (!r.data || !r.data.activo) { await idb.del("perfil").catch(()=>{}); await idb.del("cache").catch(()=>{}); await idb.del("claves").catch(()=>{}); return gate("noauth"); }
     perfil = r.data; await idb.set("perfil", perfil).catch(()=>{});
   }
 
@@ -518,9 +526,10 @@ async function boot(){
   if (!cfg.verificador && c.error) return navigator.onLine ? gate("error", c.error.message || "") : gate("offline");
   if (!cfg.verificador) return perfil.admin ? gate("crearClave") : gate("esperaClave");
 
-  KEY = await idb.get("claveEquipo").catch(()=>null);
-  if (KEY && await decText(cfg.verificador) !== VERIF) { KEY = null; await idb.del("claveEquipo"); }
-  if (!KEY) return gate("clave");
+  idb.del("claveEquipo").catch(()=>{}); // formato anterior
+  KEYS = await idb.get("claves").catch(()=>null);
+  if (KEYS && (!KEYS.aes || !KEYS.mac || await decText(cfg.verificador) !== VERIF)) { KEYS = null; await idb.del("claves"); }
+  if (!KEYS) return gate("clave");
   start();
 }
 
@@ -547,9 +556,10 @@ async function start(){
 
 // ---------- Datos ----------
 async function rowToRec(r){
-  let chofer = await decText(r.chofer_cif), cedula = "";
-  if (chofer.startsWith("{")) { try { const o = JSON.parse(chofer); chofer = o.n || ""; cedula = o.ci || ""; } catch {} }
-  return {...r, chofer, cedula, obs: await decText(r.obs_cif)};
+  let d;
+  try { d = JSON.parse(await decText(r.datos_cif)); }
+  catch { d = {unidad:"?", resultado:"No se pudo descifrar", obs:"Este registro se guardó con otra clave del equipo."}; }
+  return {...d, id: r.id, num: r.num, fotos: r.fotos || [], creado: r.creado};
 }
 async function loadRecords(){
   const { data, error } = await sb.from("inspecciones").select("*").order("creado", {ascending:false}).limit(1000);
@@ -594,7 +604,7 @@ async function flush(){
     for (const q of cola) {
       const paths = [];
       for (let i = 0; i < q.fotos.length; i++) {
-        const path = `${q.row.unidad.replace(/[^\w-]/g,"_")}/${q.id}-${i+1}.bin`;
+        const path = `${q.id}/${i+1}.bin`;
         const up = await sb.storage.from("fotos").upload(path, new Blob([q.fotos[i]], {type:"application/octet-stream"}), {upsert:true, contentType:"application/octet-stream"});
         if (up.error) throw up.error;
         paths.push(path);
@@ -696,11 +706,11 @@ async function onPhotos(e){
 }
 
 // ---------- N° de inspección ----------
-function nextNum(unidad){ const prev = records.filter(r => r.unidad === unidad).map(r => +r.num || 0); return prev.length ? Math.max(...prev) + 1 : 1; }
+function nextNum(unidad){ const u = normUnidad(unidad); const prev = records.filter(r => normUnidad(r.unidad) === u).map(r => +r.num || 0); return prev.length ? Math.max(...prev) + 1 : 1; }
 function updateNum(){
   const u = $("busId").value.trim();
   $("numInsp").textContent = u ? nextNum(u) : 1;
-  const last = records.filter(r => r.unidad === u)[0];
+  const last = records.filter(r => normUnidad(r.unidad) === normUnidad(u))[0];
   $("busHint").textContent = last ? `Última: ${fmtDate(last.fecha)} · ${last.resultado}` : (u ? "Sin inspecciones previas" : "");
   if (last && !$("matricula").value) $("matricula").value = last.matricula || "";
 }
@@ -734,7 +744,7 @@ $("inspector").addEventListener("change", () => lsSet("inspectorIMM", $("inspect
 $("btnSave").addEventListener("click", async () => {
   const unidad = $("busId").value.trim();
   if (!unidad) { $("busId").focus(); toast("Ingresá el N° interno de la unidad."); return; }
-  if (!KEY) { toast("Falta la clave del equipo."); return; }
+  if (!KEYS) { toast("Falta la clave del equipo."); return; }
   if (ciDigits($("cedula").value) && !ciValida($("cedula").value) && !saveCiOk) {
     saveCiOk = true; setTimeout(() => saveCiOk = false, 5000);
     $("cedula").focus(); toast("La cédula no parece válida. Revisala, o tocá Guardar de nuevo para guardarla igual."); return;
@@ -744,13 +754,15 @@ $("btnSave").addEventListener("click", async () => {
   try {
     const nok = ALL.filter(i => items[i.k] === "NOK").map(i => i.k);
     const id = uid();
-    const row = {
-      id, num: nextNum(unidad), unidad, empresa: $("empresa").value, matricula: $("matricula").value.trim().toUpperCase(),
+    const datos = {
+      unidad, empresa: $("empresa").value, matricula: $("matricula").value.trim().toUpperCase(),
       lugar: $("lugar").value.trim(), fecha: $("fecha").value || localNow(), inspector: $("inspector").value.trim(),
-      chofer_cif: ($("chofer").value.trim() || $("cedula").value.trim()) ? await encText(JSON.stringify({n: $("chofer").value.trim(), ci: ciDigits($("cedula").value)})) : null, obs_cif: await encText($("comments").value.trim()),
+      chofer: $("chofer").value.trim(), cedula: ciDigits($("cedula").value), obs: $("comments").value.trim(),
       resultado: nok.length ? "Con observaciones" : "Aprobado", nok, items: {...items},
       luces: Object.keys(luces).filter(k => luces[k]), ruedas: WHEELS.filter(w => wheels[w.k]).map(w => w.k),
     };
+    // Al servidor solo va: id, huella de la unidad (para numerar) y todo lo demás cifrado
+    const row = { id, num: nextNum(unidad), unidad_h: await huellaUnidad(unidad), datos_cif: await encText(JSON.stringify(datos)) };
     const fotos = [];
     for (const p of photos) fotos.push(await encBytes(new Uint8Array(await p.blob.arrayBuffer())));
     await idb.colaPut({ id, t: Date.now(), row, fotos });
@@ -903,7 +915,7 @@ $("teamForm").addEventListener("submit", async e => {
   if (error) { toast("No se pudo agregar: " + error.message); return; }
   $("teamForm").reset(); toast(`${nombre} quedó habilitado.`); loadTeam();
 });
-$("btnForget").addEventListener("click", async () => { await idb.del("claveEquipo"); location.reload(); });
+$("btnForget").addEventListener("click", async () => { await idb.del("claves"); location.reload(); });
 
 // ---------- Pestañas ----------
 let currentTab = "form";
