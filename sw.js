@@ -1,6 +1,6 @@
 // Permite abrir la app sin conexión. Los datos NO pasan por acá:
 // las inspecciones se guardan en la tablet (IndexedDB) y en Supabase.
-const CACHE = "inspeccion-stm-v3";
+const CACHE = "inspeccion-stm-v4";
 const APP = ["./", "./index.html", "./config.js", "./manifest.json", "./icon.svg"];
 const CDN = [
   "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
@@ -18,7 +18,7 @@ self.addEventListener("fetch", e => {
   if (e.request.method !== "GET" || url.hostname.endsWith("supabase.co")) return; // datos: siempre directo
   if (e.request.mode === "navigate" || url.origin === location.origin) {
     // La app: primero la red (para tomar actualizaciones), si no hay, la copia guardada
-    e.respondWith(fetch(e.request).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); return r; })
+    e.respondWith(fetch(e.request, {cache: "no-cache"}).then(r => { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); return r; })
       .catch(() => caches.match(e.request).then(r => r || caches.match("./index.html"))));
     return;
   }
