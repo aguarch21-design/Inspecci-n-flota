@@ -298,8 +298,8 @@ body{padding-top:env(safe-area-inset-top,0px)}
 //  CONFIGURACIÓN — completar con los datos del proyecto de Supabase
 //  (Supabase → Project Settings → API)
 // =====================================================================
-const SUPABASE_URL = "https://knqwhzrzhdvyjzeameun.supabase.co/rest/v1/";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXdoenJ6aGR2eWp6ZWFtZXVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NTIxMjQsImV4cCI6MjEwNzEyODEyNH0.hwtmj24G4B4qaGPgwcS8U2Ha8FwlmnKeLHvwPbgKtvo";
+const SUPABASE_URL = "https://knqwhzrzhdvyjzeameun.supabase.co";
+const SUPABASE_ANON_KEY = "TU-CLAVE-ANON-PUBLICA";
 // =====================================================================
 
 // ---------- Catálogo de ítems ----------
@@ -435,7 +435,11 @@ function gate(mode, extra = ""){
     try {
       if (mode === "login") {
         const { error } = await sb.auth.signInWithPassword({ email: $("gEmail").value.trim().toLowerCase(), password: $("gPass").value });
-        if (error) throw new Error(/invalid/i.test(error.message) ? "Correo o contraseña incorrectos." : "No se pudo ingresar. Revisá la conexión.");
+        if (error) throw new Error(/invalid login credentials/i.test(error.message) ? "Correo o contraseña incorrectos."
+          : /email not confirmed/i.test(error.message) ? "El usuario no está confirmado. En Supabase, crealo con Auto Confirm User."
+          : /api key|apikey|jwt/i.test(error.message) ? "La clave anon de index.html no es válida para este proyecto."
+          : /fetch|network/i.test(error.message) ? "No se pudo ingresar. Revisá la conexión."
+          : "No se pudo ingresar: " + error.message);
         await boot();
       } else if (mode === "crearClave") {
         const k1 = $("gK1").value, k2 = $("gK2").value;
@@ -466,8 +470,10 @@ async function logout(){
 
 // ---------- Arranque ----------
 async function boot(){
-  if (SUPABASE_URL.includes("TU-PROYECTO") || typeof supabase === "undefined") return gate("config");
-  sb ||= supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+  if (SUPABASE_URL.includes("TU-PROYECTO") || SUPABASE_ANON_KEY.includes("TU-CLAVE") || typeof supabase === "undefined") return gate("config");
+  // Tolera URL copiada con /rest/v1/ u otra ruta al final
+  const BASE_URL = SUPABASE_URL.trim().replace(/^(https:\/\/[^/]+).*$/, "$1");
+  sb ||= supabase.createClient(BASE_URL, SUPABASE_ANON_KEY.trim(), { auth: { persistSession: true, autoRefreshToken: true } });
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return gate("login");
   me = session.user;
