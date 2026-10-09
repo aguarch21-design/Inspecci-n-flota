@@ -180,6 +180,11 @@ body{padding-top:env(safe-area-inset-top,0px)}
 .tm{display:flex;flex-direction:column;flex:1;min-width:180px}
 .tm span{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 .prov{font-size:12px;color:var(--muted)}
+.fld label{display:flex;align-items:center;gap:2px;white-space:nowrap}
+.lock{font-size:10px;letter-spacing:.5px;font-weight:700;color:var(--ok);background:var(--ok-soft);padding:1px 6px;border-radius:4px;margin-left:4px;vertical-align:1px;text-transform:none}
+.hint.warn{color:var(--nok);font-weight:600}
+.ci{font-family:var(--f-mono);font-size:12px}
+.reveal{background:none;border:0;color:var(--navy);font-size:12px;text-decoration:underline;cursor:pointer;padding:0 2px}
 .team-note{font-size:13px;color:var(--muted);padding:0 4px}
 </style>
 </head>
@@ -216,7 +221,8 @@ body{padding-top:env(safe-area-inset-top,0px)}
       <div class="fld"><label for="lugar">Lugar</label><input id="lugar" value="PLANTA AÑÓN"></div>
       <div class="fld"><label for="fecha">Fecha y hora</label><input id="fecha" type="datetime-local"></div>
       <div class="fld"><label for="inspector">Inspector</label><input id="inspector" placeholder="Nombre"></div>
-      <div class="fld"><label for="chofer">Notificado / chofer</label><input id="chofer" placeholder="Nombre y apellido"></div>
+      <div class="fld"><label for="chofer">Notificado <span class="lock">cifrado</span></label><input id="chofer" placeholder="Nombre y apellido" autocomplete="off"></div>
+      <div class="fld"><label for="cedula">C.I. notificado <span class="lock">cifrado</span></label><input id="cedula" inputmode="numeric" placeholder="1.234.567-8" autocomplete="off" maxlength="11"><span class="hint" id="ciHint"></span></div>
     </div>
 
     <div class="work">
@@ -260,7 +266,7 @@ body{padding-top:env(safe-area-inset-top,0px)}
 <!-- ============ HISTORIAL ============ -->
 <section id="view-hist" hidden>
   <div class="hist-tools">
-    <input id="q" type="search" placeholder="Buscar por N° interno, matrícula, chofer u observación">
+    <input id="q" type="search" placeholder="Buscar por N° interno, matrícula, chofer, C.I. u observación">
     <select id="fRes"><option value="">Todos los resultados</option><option value="bad">Con observaciones</option><option value="ok">Aprobados</option></select>
     <select id="fEmp"><option value="">Todas las empresas</option><option>CUTCSA</option><option>COETC</option><option>COME</option><option>UCOT</option></select>
     <button class="btn btn-plain" id="btnXlsx" type="button">Exportar a Excel</button>
@@ -299,7 +305,7 @@ body{padding-top:env(safe-area-inset-top,0px)}
 //  (Supabase → Project Settings → API)
 // =====================================================================
 const SUPABASE_URL = "https://knqwhzrzhdvyjzeameun.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtucXdoenJ6aGR2eWp6ZWFtZXVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1NTIxMjQsImV4cCI6MjEwNzEyODEyNH0.hwtmj24G4B4qaGPgwcS8U2Ha8FwlmnKeLHvwPbgKtvo";
+const SUPABASE_ANON_KEY = "TU-CLAVE-ANON-PUBLICA";
 // =====================================================================
 
 // ---------- Catálogo de ítems ----------
@@ -393,6 +399,21 @@ async function decText(s, key = KEY){
   try { return UTXT.decode(await decBytes(unb64(s.slice(3)), key)); } catch { return "[no se pudo descifrar]"; }
 }
 
+// ---------- Cédula uruguaya ----------
+const ciDigits = s => String(s||"").replace(/\D/g, "");
+function ciValida(s){
+  const d = ciDigits(s); if (d.length < 7 || d.length > 8) return false;
+  const n = d.padStart(8, "0"), w = [2,9,8,7,6,3,4];
+  const sum = w.reduce((a, x, i) => a + x * +n[i], 0);
+  return (10 - sum % 10) % 10 === +n[7];
+}
+function ciFormato(s){
+  const d = ciDigits(s); if (d.length < 2) return d;
+  const cuerpo = d.slice(0,-1), dv = d.slice(-1);
+  return cuerpo.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "-" + dv;
+}
+const ciOculta = s => { const f = ciFormato(s); return f ? f.replace(/\d(?=.*\d{3}-)/g, "•") : ""; };
+
 // ---------- Estado ----------
 let sb = null, me = null, perfil = null, cfg = {};
 let items = {}, wheels = {}, luces = {}, photos = [];
@@ -413,6 +434,7 @@ function gate(mode, extra = ""){
       <div class="fld"><label for="gPass">Contraseña</label><input id="gPass" type="password" autocomplete="current-password" required></div>
       <div class="err" id="gErr">${esc(extra)}</div><button class="btn btn-navy" type="submit">Entrar</button></form>`,
     noauth: `<h2>Usuario no habilitado</h2><p>Tu usuario (${esc(me?.email)}) existe pero no está en la lista de inspectores. Pedile al administrador que te agregue en la pestaña Equipo.</p>${out}`,
+    error: `<h2>No se pudo cargar</h2><p>La base de datos respondió con un error. Mandale este mensaje al administrador:</p><pre class="obs" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(extra)}</pre><button class="btn btn-navy" type="button" id="gRetry">Reintentar</button>${out}`,
     offline: `<h2>Sin conexión</h2><p>La primera vez hace falta internet para ingresar. Conectate y volvé a intentar.</p><button class="btn btn-navy" type="button" id="gRetry">Reintentar</button>`,
     esperaClave: `<h2>Falta la clave del equipo</h2><p>El administrador todavía no creó la clave del equipo. Cuando lo haga, tocá Reintentar.</p><button class="btn btn-navy" type="button" id="gRetry">Reintentar</button>${out}`,
     crearClave: `<h2>Crear la clave del equipo</h2>
@@ -482,7 +504,7 @@ async function boot(){
   const r = await sb.from("inspectores").select("email,nombre,admin,activo").eq("email", me.email.toLowerCase()).maybeSingle();
   if (r.error) {
     perfil = await idb.get("perfil").catch(()=>null);
-    if (!perfil) return gate("offline");
+    if (!perfil) return navigator.onLine ? gate("error", r.error.message || String(r.error.code||"")) : gate("offline");
     online = false;
   } else {
     if (!r.data || !r.data.activo) { await idb.del("perfil").catch(()=>{}); await idb.del("cache").catch(()=>{}); await idb.del("claveEquipo").catch(()=>{}); return gate("noauth"); }
@@ -493,7 +515,8 @@ async function boot(){
   const c = await sb.from("config").select("clave,valor");
   if (!c.error) { cfg = Object.fromEntries(c.data.map(x => [x.clave, x.valor])); await idb.set("config", cfg).catch(()=>{}); }
   else cfg = (await idb.get("config").catch(()=>null)) || {};
-  if (!cfg.verificador) return perfil.admin ? gate("crearClave") : (c.error ? gate("offline") : gate("esperaClave"));
+  if (!cfg.verificador && c.error) return navigator.onLine ? gate("error", c.error.message || "") : gate("offline");
+  if (!cfg.verificador) return perfil.admin ? gate("crearClave") : gate("esperaClave");
 
   KEY = await idb.get("claveEquipo").catch(()=>null);
   if (KEY && await decText(cfg.verificador) !== VERIF) { KEY = null; await idb.del("claveEquipo"); }
@@ -523,7 +546,11 @@ async function start(){
 }
 
 // ---------- Datos ----------
-async function rowToRec(r){ return {...r, chofer: await decText(r.chofer_cif), obs: await decText(r.obs_cif)}; }
+async function rowToRec(r){
+  let chofer = await decText(r.chofer_cif), cedula = "";
+  if (chofer.startsWith("{")) { try { const o = JSON.parse(chofer); chofer = o.n || ""; cedula = o.ci || ""; } catch {} }
+  return {...r, chofer, cedula, obs: await decText(r.obs_cif)};
+}
 async function loadRecords(){
   const { data, error } = await sb.from("inspecciones").select("*").order("creado", {ascending:false}).limit(1000);
   if (error) { setOnline(false); return; }
@@ -678,18 +705,26 @@ function updateNum(){
   if (last && !$("matricula").value) $("matricula").value = last.matricula || "";
 }
 $("busId").addEventListener("input", updateNum);
+$("cedula").addEventListener("blur", () => {
+  const v = $("cedula").value, h = $("ciHint");
+  if (!ciDigits(v)) { h.textContent = ""; h.classList.remove("warn"); return; }
+  $("cedula").value = ciFormato(v);
+  const ok = ciValida(v);
+  h.textContent = ok ? "Cédula válida" : "Revisá la cédula: el dígito verificador no coincide";
+  h.classList.toggle("warn", !ok);
+});
 
 function resetForm(keepHead){
   items = Object.fromEntries(ALL.map(i=>[i.k,"OK"])); wheels = {}; luces = {};
   photos.forEach(p => URL.revokeObjectURL(p.url)); photos = [];
-  ["busId","matricula","comments","chofer"].forEach(id => $(id).value = "");
+  ["busId","matricula","comments","chofer","cedula"].forEach(id => $(id).value = ""); $("ciHint").textContent = ""; $("ciHint").classList.remove("warn");
   $("fecha").value = localNow();
   if (!keepHead) { $("lugar").value = "PLANTA AÑÓN"; $("empresa").value = "CUTCSA"; }
   renderPhotos(); syncUI(); updateNum();
 }
 
 // ---------- Guardar ----------
-let confirmReset = false;
+let confirmReset = false, saveCiOk = false;
 $("btnReset").addEventListener("click", () => {
   if (!confirmReset) { confirmReset = true; $("btnReset").textContent = "¿Seguro?"; setTimeout(()=>{confirmReset=false; $("btnReset").textContent="Limpiar";}, 3000); return; }
   confirmReset = false; $("btnReset").textContent = "Limpiar"; resetForm(true);
@@ -700,6 +735,11 @@ $("btnSave").addEventListener("click", async () => {
   const unidad = $("busId").value.trim();
   if (!unidad) { $("busId").focus(); toast("Ingresá el N° interno de la unidad."); return; }
   if (!KEY) { toast("Falta la clave del equipo."); return; }
+  if (ciDigits($("cedula").value) && !ciValida($("cedula").value) && !saveCiOk) {
+    saveCiOk = true; setTimeout(() => saveCiOk = false, 5000);
+    $("cedula").focus(); toast("La cédula no parece válida. Revisala, o tocá Guardar de nuevo para guardarla igual."); return;
+  }
+  saveCiOk = false;
   const btn = $("btnSave"); btn.disabled = true; btn.textContent = "Guardando…";
   try {
     const nok = ALL.filter(i => items[i.k] === "NOK").map(i => i.k);
@@ -707,7 +747,7 @@ $("btnSave").addEventListener("click", async () => {
     const row = {
       id, num: nextNum(unidad), unidad, empresa: $("empresa").value, matricula: $("matricula").value.trim().toUpperCase(),
       lugar: $("lugar").value.trim(), fecha: $("fecha").value || localNow(), inspector: $("inspector").value.trim(),
-      chofer_cif: await encText($("chofer").value.trim()), obs_cif: await encText($("comments").value.trim()),
+      chofer_cif: ($("chofer").value.trim() || $("cedula").value.trim()) ? await encText(JSON.stringify({n: $("chofer").value.trim(), ci: ciDigits($("cedula").value)})) : null, obs_cif: await encText($("comments").value.trim()),
       resultado: nok.length ? "Con observaciones" : "Aprobado", nok, items: {...items},
       luces: Object.keys(luces).filter(k => luces[k]), ruedas: WHEELS.filter(w => wheels[w.k]).map(w => w.k),
     };
@@ -740,12 +780,13 @@ function filtered(){
     if (fr === "bad" && !r.nok?.length) return false;
     if (fr === "ok" && r.nok?.length) return false;
     if (fe && r.empresa !== fe) return false;
-    if (q && ![r.unidad, r.matricula, r.obs, r.inspector, r.chofer, r.lugar].some(v => String(v||"").toLowerCase().includes(q))) return false;
+    if (q && ![r.unidad, r.matricula, r.obs, r.inspector, r.chofer, r.lugar].some(v => String(v||"").toLowerCase().includes(q)) && !(ciDigits(q).length >= 4 && ciDigits(r.cedula).includes(ciDigits(q)))) return false;
     return true;
   });
 }
 let pendingDel = null;
 const openPhotos = {}; // id -> [objectURL]
+const shownCi = {};
 function renderList(){
   $("histCount").textContent = records.length;
   const rows = filtered();
@@ -762,7 +803,7 @@ function renderList(){
     const canDel = r._pend || perfil?.admin;
     return `<article class="panel rec ${isBad?"bad":""} ${r._pend?"pend":""}">
       <div class="u">${esc(r.unidad)}<small>Insp. N° ${esc(r.num)}${r._pend?" (prov.)":""}</small></div>
-      <div class="meta"><strong>${esc(fmtDate(r.fecha))}</strong> · ${esc(r.empresa)}${r.matricula?" · "+esc(r.matricula):""}<br>${esc(r.lugar)}${r.inspector?" · Inspector: "+esc(r.inspector):""}${r.chofer?" · Notificado: "+esc(r.chofer):""}</div>
+      <div class="meta"><strong>${esc(fmtDate(r.fecha))}</strong> · ${esc(r.empresa)}${r.matricula?" · "+esc(r.matricula):""}<br>${esc(r.lugar)}${r.inspector?" · Inspector: "+esc(r.inspector):""}${r.chofer?" · Notificado: "+esc(r.chofer):""}${r.cedula?` · C.I. <span class="ci" data-ci="${esc(r.id)}">${esc(shownCi[r.id]?ciFormato(r.cedula):ciOculta(r.cedula))}</span> <button class="reveal" data-rev="${esc(r.id)}">${shownCi[r.id]?"ocultar":"ver"}</button>`:""}</div>
       <span class="pill ${r._pend?"wait":isBad?"bad":"ok"}">${r._pend?"Pendiente de envío":isBad? r.nok.length + (r.nok.length===1?" falla":" fallas") : "Aprobado"}</span>
       <div class="body">
         ${chips?`<div class="chips">${chips}</div>`:""}
@@ -792,6 +833,7 @@ async function loadPhotos(id, btn){
 $("list").addEventListener("click", async e => {
   const a = e.target.closest("[data-img]");
   if (a) { e.preventDefault(); const lb = document.createElement("div"); lb.className = "lightbox"; lb.innerHTML = `<img src="${a.dataset.img}" alt="Foto de la falla">`; lb.onclick = () => lb.remove(); document.body.appendChild(lb); return; }
+  const rv = e.target.closest("[data-rev]"); if (rv) { const id = rv.dataset.rev; shownCi[id] = !shownCi[id]; if (shownCi[id]) setTimeout(() => { shownCi[id] = false; renderList(); }, 15000); renderList(); return; }
   const f = e.target.closest("[data-fotos]"); if (f) { loadPhotos(f.dataset.fotos, f); return; }
   const d = e.target.closest("[data-del]"); if (!d) return;
   const id = d.dataset.del;
@@ -818,7 +860,7 @@ $("btnXlsx").addEventListener("click", () => {
   if (typeof XLSX === "undefined") { toast("No se pudo cargar el generador de Excel. Revisá la conexión."); return; }
   const resumen = rows.map(r => ({
     "Unidad": r.unidad, "N° Insp.": r.num, "Fecha": fmtDate(r.fecha), "Empresa": r.empresa, "Matrícula": r.matricula,
-    "Lugar": r.lugar, "Inspector": r.inspector, "Notificado / chofer": r.chofer || "", "Resultado": r.resultado,
+    "Lugar": r.lugar, "Inspector": r.inspector, "Notificado / chofer": r.chofer || "", "C.I. notificado": r.cedula ? ciFormato(r.cedula) : "", "Resultado": r.resultado,
     "Cant. fallas": r.nok?.length||0, "Fallas": (r.nok||[]).map(k => failText(r, k)).join("; "),
     "Ruedas con falla": (r.ruedas||[]).join(", "), "Fotos": r.fotos?.length||0, "Observaciones": r.obs || ""
   }));
@@ -831,7 +873,7 @@ $("btnXlsx").addEventListener("click", () => {
     return o;
   });
   const wb = XLSX.utils.book_new();
-  const ws1 = XLSX.utils.json_to_sheet(resumen); ws1["!cols"] = [8,8,16,10,11,16,16,20,16,10,50,14,6,50].map(w=>({wch:w}));
+  const ws1 = XLSX.utils.json_to_sheet(resumen); ws1["!cols"] = [8,8,16,10,11,16,16,20,12,16,10,50,14,6,50].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws1, "Inspecciones");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), "Detalle por ítem");
   XLSX.writeFile(wb, `Actas_Inspeccion_Omnibus_${localNow().slice(0,10)}.xlsx`);
@@ -881,7 +923,7 @@ $("tab-team").onclick = () => show("team");
 // ---------- Inicio ----------
 resetForm(false);
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
-boot().catch(e => { console.error(e); gate("offline"); });
+boot().catch(e => { console.error(e); navigator.onLine ? gate("error", e?.message || String(e)) : gate("offline"); });
 })();
 </script>
 </body>
